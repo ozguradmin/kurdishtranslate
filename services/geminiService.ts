@@ -1,8 +1,6 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { Language, languageMap, TranslationResult } from '../types';
 
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-
 const responseSchema = {
     type: Type.OBJECT,
     properties: {
@@ -39,6 +37,13 @@ export const translateText = async (
     targetLang: Language,
     uiLang: 'tr' | 'en' | 'ku' // Added UI language parameter
 ): Promise<TranslationResult> => {
+    if (!process.env.API_KEY) {
+        console.error("API_KEY environment variable is not set.");
+        throw new Error("API_KEY_MISSING");
+    }
+    
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+
     if (!text.trim()) {
         return {
             detectedLanguage: '',

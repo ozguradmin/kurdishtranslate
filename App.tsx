@@ -50,7 +50,11 @@ const App = () => {
             setResult(translation);
             setIsMeaningVisible(false);
         } catch (e: any) {
-            setError(t('apiError'));
+            if (e.message === 'API_KEY_MISSING') {
+                setError(t('apiKeyMissingError'));
+            } else {
+                setError(t('apiError'));
+            }
             setResult(null);
             console.error(e);
         } finally {
