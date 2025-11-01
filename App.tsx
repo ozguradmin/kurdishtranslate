@@ -1,18 +1,15 @@
 import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { translateText } from './services/geminiService';
-import { Language, TranslationResult } from './types';
+import { Language, TranslationResult, languageMap } from './types';
 import { useTranslation } from './i18n';
 
-// Debounce hook to prevent API calls on every keystroke
 const useDebounce = (value: string, delay: number) => {
     const [debouncedValue, setDebouncedValue] = useState(value);
     useEffect(() => {
         const handler = setTimeout(() => {
             setDebouncedValue(value);
         }, delay);
-        return () => {
-            clearTimeout(handler);
-        };
+        return () => clearTimeout(handler);
     }, [value, delay]);
     return debouncedValue;
 };
@@ -20,45 +17,45 @@ const useDebounce = (value: string, delay: number) => {
 const App = () => {
     const { t, language: uiLang, setLanguage: setUiLang } = useTranslation();
     const [sourceText, setSourceText] = useState('');
-    const [sourceLang, setSourceLang] = useState<Language>('auto');
-    const [targetLang, setTargetLang] = useState<Language>('ku');
+    const [sourceLang, setSourceLang] = useState<Language>('ku');
+    const [targetLang, setTargetLang] = useState<Language>('tr'); // Default to TR
     const [result, setResult] = useState<TranslationResult | null>(null);
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState('');
     const [copiedStates, setCopiedStates] = useState<Record<string, boolean>>({});
     const [isMeaningVisible, setIsMeaningVisible] = useState(false);
+    const [showAlternatives, setShowAlternatives] = useState(false);
 
     const debouncedSourceText = useDebounce(sourceText, 750);
-    const lastRequestRef = useRef('');
+    const requestGenerationRef = useRef(0);
 
     const performTranslation = useCallback(async () => {
-        const requestKey = `${debouncedSourceText}:${sourceLang}:${targetLang}:${uiLang}`;
-        if (!debouncedSourceText.trim() || lastRequestRef.current === requestKey) {
-            if (!debouncedSourceText.trim()) {
-                setResult(null);
-                setError('');
-            }
+        if (!debouncedSourceText.trim()) {
+            setResult(null);
+            setError('');
             return;
         }
 
+        const currentGeneration = ++requestGenerationRef.current;
         setIsLoading(true);
         setError('');
-        lastRequestRef.current = requestKey;
 
         try {
-            const translation = await translateText(debouncedSourceText, sourceLang, targetLang, uiLang);
-            setResult(translation);
-            setIsMeaningVisible(false);
-        } catch (e: any) {
-            if (e.message === 'API_KEY_MISSING') {
-                setError(t('apiKeyMissingError'));
-            } else {
-                setError(t('apiError'));
+            const translation = await translateText(debouncedSourceText, sourceLang, targetLang, uiLang as 'tr' | 'en' | 'ku');
+            if (currentGeneration === requestGenerationRef.current) {
+                setResult(translation);
+                setIsMeaningVisible(false);
+                setShowAlternatives(false);
             }
-            setResult(null);
-            console.error(e);
+        } catch (e: any) {
+            if (currentGeneration === requestGenerationRef.current) {
+                setError(e.message === 'API_KEY_MISSING' ? t('apiKeyMissingError') : t('apiError'));
+                setResult(null);
+            }
         } finally {
-            setIsLoading(false);
+            if (currentGeneration === requestGenerationRef.current) {
+                setIsLoading(false);
+            }
         }
     }, [debouncedSourceText, sourceLang, targetLang, uiLang, t]);
 
@@ -67,14 +64,12 @@ const App = () => {
     }, [performTranslation]);
 
     useEffect(() => {
-        if (sourceLang !== 'auto' && sourceLang === targetLang) {
-            const newTargetLang = sourceLang === 'ku' ? 'en' : 'ku';
-            setTargetLang(newTargetLang);
+        if (sourceLang === targetLang) {
+            setTargetLang(sourceLang === 'ku' ? 'en' : 'ku');
         }
     }, [sourceLang, targetLang]);
 
     const handleSwapLanguages = () => {
-        if (sourceLang === 'auto') return;
         setSourceLang(targetLang);
         setTargetLang(sourceLang);
         setSourceText(result?.mainTranslation || '');
@@ -89,164 +84,171 @@ const App = () => {
     const handleAlternativeClick = (alternative: string) => {
         if(result) {
             const currentMain = result.mainTranslation;
-            const newAlternatives = result.alternativeTranslations.filter(t => t !== alternative);
-            newAlternatives.push(currentMain);
-            setResult({
-                ...result,
-                mainTranslation: alternative,
-                alternativeTranslations: newAlternatives,
-            });
+            const newAlternatives = result.alternativeTranslations.filter(t => t !== alternative).concat(currentMain);
+            setResult({ ...result, mainTranslation: alternative, alternativeTranslations: newAlternatives });
         }
     };
 
     const copyToClipboard = (text: string | undefined, id: string) => {
         if (!text) return;
         navigator.clipboard.writeText(text);
-        setCopiedStates({ [id]: true });
-        setTimeout(() => setCopiedStates({ [id]: false }), 2000);
+        setCopiedStates(prev => ({ ...prev, [id]: true }));
+        setTimeout(() => setCopiedStates(prev => ({ ...prev, [id]: false })), 2000);
     };
 
-    const speakText = (text: string | undefined) => {
+    const speakText = (text: string | undefined, langCode: Language) => {
         if (!text || typeof window.speechSynthesis === 'undefined') return;
         const utterance = new SpeechSynthesisUtterance(text);
         const langMap: Record<string, string> = { 'en': 'en-US', 'tr': 'tr-TR' };
-        
-        const detectedLang = result?.detectedLanguage?.toLowerCase();
-        const currentLang = detectedLang?.startsWith('english') ? 'en' : targetLang;
-
-        if (langMap[currentLang]) {
-            utterance.lang = langMap[currentLang];
+        if (langMap[langCode]) {
+            utterance.lang = langMap[langCode];
         }
         window.speechSynthesis.speak(utterance);
     };
 
-    const isSourceKurdish = useMemo(() => {
-        const detectedLang = result?.detectedLanguage?.toLowerCase();
-        return sourceLang === 'ku' || (sourceLang === 'auto' && !!detectedLang && detectedLang.startsWith('kurdish'));
-    }, [sourceLang, result]);
-    
+    const isSourceKurdish = useMemo(() => sourceLang === 'ku', [sourceLang]);
     const isTargetKurdish = useMemo(() => targetLang === 'ku', [targetLang]);
+
+    const sourceDisplayLang = t(languageMap[sourceLang].toLowerCase() as 'kurdish' | 'turkish' | 'english');
 
     return (
         <>
-            <header className="p-4 pt-6 space-y-4 bg-background-light dark:bg-background-dark">
-                <div className="flex items-center h-12 justify-between">
-                    <h1 className="text-2xl font-bold tracking-tight">{t('appTitle')}</h1>
-                    <div className="flex h-8 w-28 items-center justify-center rounded-full bg-border-light dark:bg-card-dark p-1">
-                        {(['tr', 'en', 'ku'] as const).map(lang => (
-                            <label key={lang} className={`flex cursor-pointer h-full grow items-center justify-center overflow-hidden rounded-full px-2 text-xs font-semibold ${uiLang === lang ? 'bg-card-light dark:bg-background-dark text-primary shadow-sm' : 'text-gray-500 dark:text-gray-400'}`}>
-                                <span className="truncate">{lang.toUpperCase()}</span>
-                                <input className="invisible w-0" name="ui-lang" type="radio" value={lang} checked={uiLang === lang} onChange={() => setUiLang(lang)} />
-                            </label>
+            <header className="p-4 pt-8">
+                <div className="flex items-center justify-between">
+                    <h1 className="text-xl font-bold tracking-tight text-text-dark/90">
+                        Kurdish<span className="text-primary">AI</span>
+                    </h1>
+                    <div className="flex items-center gap-1 p-1 rounded-full bg-card-dark border border-border-dark">
+                        {(['en', 'tr', 'ku'] as const).map(lang => (
+                            <button key={lang} onClick={() => setUiLang(lang)} className={`px-3 py-1 text-xs font-semibold rounded-full transition-colors ${uiLang === lang ? 'bg-primary/20 text-primary' : 'text-text-dark/60 hover:bg-border-dark/50'}`}>
+                                {lang.toUpperCase()}
+                            </button>
                         ))}
                     </div>
                 </div>
-                <p className="text-sm text-gray-500 dark:text-gray-400 px-1">{t('appSubtitle')}</p>
             </header>
 
             <main className="flex-grow p-4 space-y-4">
-                <div className="flex items-center justify-between gap-2 p-2 bg-card-light dark:bg-card-dark rounded-lg shadow-sm border border-border-light dark:border-border-dark">
+                <div className="flex items-center justify-between gap-2 p-1 rounded-full bg-card-dark border border-border-dark">
                     <div className="relative flex-1">
-                        <select value={sourceLang} onChange={e => setSourceLang(e.target.value as Language)} className="w-full appearance-none bg-transparent py-2 pl-3 pr-8 text-sm font-medium focus:outline-none focus:ring-0 border-none">
-                            <option value="auto">{t('autoDetect')}</option>
+                        <select value={sourceLang} onChange={e => setSourceLang(e.target.value as Language)} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer">
                             <option value="ku">{t('kurdish')}</option>
                             <option value="tr">{t('turkish')}</option>
                             <option value="en">{t('english')}</option>
                         </select>
-                        <span className="material-symbols-outlined pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-gray-400">expand_more</span>
+                        <div className="flex items-center gap-1.5 pl-4 py-2 pointer-events-none">
+                            <span className="text-sm font-medium text-text-dark/80 truncate">{sourceDisplayLang}</span>
+                            <span className="material-symbols-outlined text-base text-text-dark/60">expand_more</span>
+                        </div>
                     </div>
-                    <button onClick={handleSwapLanguages} disabled={sourceLang === 'auto'} className="flex items-center justify-center h-10 w-10 rounded-full bg-border-light dark:bg-border-dark text-gray-600 dark:text-gray-300 disabled:opacity-50 disabled:cursor-not-allowed" title={t('swapLanguages')}>
-                        <span className="material-symbols-outlined">swap_horiz</span>
+
+                    <button onClick={handleSwapLanguages} className="flex items-center justify-center h-10 w-10 rounded-full bg-background-dark border border-border-dark text-primary shadow-glow-inner" title={t('swapLanguages')}>
+                        <span className="material-symbols-outlined text-2xl">swap_horiz</span>
                     </button>
+
                     <div className="relative flex-1">
-                        <select value={targetLang} onChange={e => setTargetLang(e.target.value as Language)} className="w-full appearance-none bg-transparent py-2 pl-3 pr-8 text-sm font-medium text-right focus:outline-none focus:ring-0 border-none">
+                         <select value={targetLang} onChange={e => setTargetLang(e.target.value as Language)} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer">
                             <option value="ku">{t('kurdish')}</option>
                             <option value="tr">{t('turkish')}</option>
                             <option value="en">{t('english')}</option>
                         </select>
-                        <span className="material-symbols-outlined pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-gray-400">expand_more</span>
+                        <div className="flex items-center justify-end gap-1.5 pr-4 py-2 pointer-events-none">
+                            <span className="text-sm font-medium text-text-dark/80">{t(targetLang)}</span>
+                            <span className="material-symbols-outlined text-base text-text-dark/60">expand_more</span>
+                        </div>
                     </div>
                 </div>
 
-                <div className="flex flex-col gap-4 rounded-lg bg-card-light dark:bg-card-dark p-4 shadow-sm border border-border-light dark:border-border-dark">
-                    <textarea value={sourceText} onChange={e => setSourceText(e.target.value)} maxLength={5000} className="flex w-full min-h-[120px] flex-1 resize-none bg-transparent p-0 text-lg placeholder:text-gray-400 focus:outline-none focus:ring-0 border-none" placeholder={t('sourcePlaceholder')}></textarea>
-                    <div className="flex items-center justify-between">
+                <div className="flex flex-col min-h-[160px] justify-between gap-4 rounded-xl bg-card-dark p-4 border border-border-dark focus-within:border-primary/50 focus-within:shadow-glow-sm transition-all">
+                    <textarea value={sourceText} onChange={e => setSourceText(e.target.value)} maxLength={5000} className="w-full flex-1 resize-none bg-transparent p-0 text-2xl placeholder:text-text-dark/40 focus:outline-none focus:ring-0 border-none" placeholder={t('sourcePlaceholder')}></textarea>
+                    {sourceText && <div className="flex items-center justify-between gap-2 text-text-dark/60 fade-in">
                         {result?.correctedSourceText && result.correctedSourceText !== sourceText && (
-                            <button onClick={handleCorrectionClick} className="text-sm text-primary">
-                                {t('didYouMean')} <span className="font-semibold">{result.correctedSourceText}</span>
+                            <button onClick={handleCorrectionClick} className="flex items-center gap-1.5 text-sm text-primary hover:text-primary/80 transition-colors text-left">
+                                <span className="material-symbols-outlined text-base">magic_button</span>
+                                <span>{t('didYouMean')} <span className="font-semibold">{result.correctedSourceText}</span></span>
                             </button>
                         )}
-                        <div className='flex-grow' />
-                        <p className="text-xs text-gray-400 dark:text-gray-500">{sourceText.length}/5000</p>
-                    </div>
-                    <div className="h-px bg-border-light dark:bg-border-dark"></div>
-                    <div className="flex items-center justify-end gap-2">
-                        <button disabled={isSourceKurdish || !sourceText} onClick={() => speakText(sourceText)} title={isSourceKurdish ? t('kurdishNotSupportedForTTS') : t('speakTooltip')} className="flex items-center justify-center h-10 w-10 rounded-full hover:bg-border-light dark:hover:bg-border-dark text-gray-600 dark:text-gray-300 disabled:opacity-50 disabled:cursor-not-allowed">
-                            <span className="material-symbols-outlined">volume_up</span>
-                        </button>
-                        <button onClick={() => copyToClipboard(sourceText, 'source')} title={t('copyTooltip')} className="flex items-center justify-center h-10 w-10 rounded-full hover:bg-border-light dark:hover:bg-border-dark text-gray-600 dark:text-gray-300">
-                           <span className="material-symbols-outlined">{copiedStates['source'] ? 'check' : 'content_copy'}</span>
-                        </button>
-                    </div>
-                </div>
-
-                <div className="flex flex-col gap-4 rounded-lg bg-card-light dark:bg-card-dark p-4 shadow-sm border border-border-light dark:border-border-dark">
-                    <div className="min-h-[120px] flex items-start">
-                        {isLoading ? (
-                            <div className="flex items-center gap-2">
-                                <div className="w-2 h-2 rounded-full bg-primary animate-pulse [animation-delay:-0.3s]"></div>
-                                <div className="w-2 h-2 rounded-full bg-primary animate-pulse [animation-delay:-0.15s]"></div>
-                                <div className="w-2 h-2 rounded-full bg-primary animate-pulse"></div>
-                            </div>
-                        ) : (
-                            <p className="text-lg text-primary">{result?.mainTranslation}</p>
-                        )}
-                    </div>
-
-                    {result?.meaningExplanation && isMeaningVisible && (
-                         <div className="p-3 text-sm rounded-lg bg-background-light dark:bg-background-dark text-gray-600 dark:text-gray-300">
-                             <h4 className="font-semibold text-gray-800 dark:text-gray-100 mb-1">{t('meaningTitle')}</h4>
-                             {result.meaningExplanation}
-                         </div>
-                    )}
-
-                    <div className="h-px bg-border-light dark:bg-border-dark"></div>
-                    <div className="flex items-center justify-between">
+                         <div className="flex-grow"></div>
                         <div className="flex items-center gap-2">
-                            <button disabled={isTargetKurdish || !result?.mainTranslation} onClick={() => speakText(result?.mainTranslation)} title={isTargetKurdish ? t('kurdishNotSupportedForTTS') : t('speakTooltip')} className="flex items-center justify-center h-10 w-10 rounded-full hover:bg-border-light dark:hover:bg-border-dark text-gray-600 dark:text-gray-300 disabled:opacity-50 disabled:cursor-not-allowed">
-                                <span className="material-symbols-outlined">volume_up</span>
+                             <button onClick={() => speakText(sourceText, sourceLang)} disabled={isSourceKurdish} title={isSourceKurdish ? t('kurdishNotSupportedForTTS') : t('speakTooltip')} className="flex items-center justify-center h-8 w-8 rounded-full hover:bg-border-dark/50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+                                <span className="material-symbols-outlined text-xl">volume_up</span>
                             </button>
-                            <button onClick={() => copyToClipboard(result?.mainTranslation, 'target')} title={t('copyTooltip')} className="flex items-center justify-center h-10 w-10 rounded-full hover:bg-border-light dark:hover:bg-border-dark text-gray-600 dark:text-gray-300">
-                                <span className="material-symbols-outlined">{copiedStates['target'] ? 'check' : 'content_copy'}</span>
+                            <button onClick={() => copyToClipboard(sourceText, 'source')} title={t('copyTooltip')} className="flex items-center justify-center h-8 w-8 rounded-full hover:bg-border-dark/50 transition-colors">
+                               <span className="material-symbols-outlined text-xl">{copiedStates['source'] ? 'check' : 'content_copy'}</span>
                             </button>
                         </div>
-                        {result?.meaningExplanation && (
-                            <button onClick={() => setIsMeaningVisible(!isMeaningVisible)} title={t('infoTooltip')} className="flex items-center justify-center h-10 w-10 rounded-full text-secondary hover:bg-secondary/10">
-                                <span className="material-symbols-outlined text-2xl">info</span>
-                            </button>
-                        )}
-                    </div>
-                    
-                    {result && result.alternativeTranslations.length > 0 && (
-                        <div className="space-y-3 pt-2">
-                            <h4 className='text-sm font-semibold text-gray-500 dark:text-gray-400 px-1'>{t('alternativesTitle')}</h4>
-                            {result.alternativeTranslations.map((alt, index) => (
-                                <div key={index} onClick={() => handleAlternativeClick(alt)} className="flex items-center justify-between p-3 rounded-lg bg-background-light dark:bg-background-dark cursor-pointer">
-                                    <p className="text-sm font-medium">{alt}</p>
-                                    <span className="material-symbols-outlined text-lg text-gray-400">swap_horiz</span>
-                                </div>
-                            ))}
-                        </div>
-                    )}
+                    </div>}
                 </div>
-
-                {error && (
-                    <div className="flex items-center gap-3 p-4 bg-red-500/10 text-red-700 dark:text-red-400 rounded-lg border border-red-500/20">
+                
+                {isLoading ? (
+                    <div className="flex flex-col min-h-[160px] justify-center items-center gap-4 rounded-xl bg-card-dark p-4 border border-border-dark">
+                        <div className="flex items-center gap-2 loading-dots">
+                            <div className="h-3 w-3 rounded-full bg-primary"></div>
+                            <div className="h-3 w-3 rounded-full bg-primary"></div>
+                            <div className="h-3 w-3 rounded-full bg-primary"></div>
+                        </div>
+                    </div>
+                ) : error ? (
+                    <div className="flex items-center gap-3 p-4 bg-red-500/10 text-red-400 rounded-xl border border-red-500/20 fade-in">
                         <span className="material-symbols-outlined">error</span>
                         <p className="text-sm font-medium">{error}</p>
                     </div>
+                ) : result?.mainTranslation && (
+                    <div className="relative flex flex-col gap-2 rounded-xl bg-card-dark p-4 border border-border-dark fade-in">
+                        <div className="flex flex-col min-h-[72px] justify-center">
+                            <p className="text-2xl text-text-dark font-medium pr-10">{result.mainTranslation}</p>
+                        </div>
+
+                        {result.meaningExplanation && (
+                            <button onClick={() => setIsMeaningVisible(!isMeaningVisible)} title={t('infoTooltip')} className="absolute top-3 right-3 z-10 flex h-8 w-8 items-center justify-center rounded-full text-primary/80 transition-colors hover:bg-border-dark/50 hover:text-primary">
+                                <span className="material-symbols-outlined text-xl">{isMeaningVisible ? 'close' : 'question_mark'}</span>
+                            </button>
+                        )}
+                        
+                        {isMeaningVisible && result.meaningExplanation && (
+                             <div className="p-3 text-sm rounded-lg bg-background-dark text-text-dark/80 fade-in">
+                                 <h4 className="font-semibold text-text-dark/90 mb-1">{t('meaningTitle')}</h4>
+                                 {result.meaningExplanation}
+                             </div>
+                        )}
+
+                        <div className="flex items-center justify-between gap-2 text-text-dark/60">
+                            <div className="flex items-center gap-2">
+                                {result.alternativeTranslations.length > 0 && (
+                                    <button onClick={() => setShowAlternatives(!showAlternatives)} className="flex items-center gap-1.5 text-sm text-primary/80 hover:text-primary transition-colors">
+                                        <span className="material-symbols-outlined text-base transition-transform" style={{ transform: showAlternatives ? 'rotate(180deg)' : 'rotate(0deg)'}}>expand_more</span>
+                                        <span>{t('alternativesToggle')}</span>
+                                    </button>
+                                )}
+                            </div>
+                            <div className="flex items-center gap-2">
+                                 <button onClick={() => speakText(result.mainTranslation, targetLang)} disabled={isTargetKurdish} title={isTargetKurdish ? t('kurdishNotSupportedForTTS') : t('speakTooltip')} className="flex items-center justify-center h-8 w-8 rounded-full hover:bg-border-dark/50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+                                    <span className="material-symbols-outlined text-xl">volume_up</span>
+                                </button>
+                                <button onClick={() => copyToClipboard(result.mainTranslation, 'target')} title={t('copyTooltip')} className="flex items-center justify-center h-8 w-8 rounded-full hover:bg-border-dark/50 transition-colors">
+                                   <span className="material-symbols-outlined text-xl">{copiedStates['target'] ? 'check' : 'content_copy'}</span>
+                                </button>
+                            </div>
+                        </div>
+
+                        {showAlternatives && result.alternativeTranslations.length > 0 && (
+                            <div className="mt-2 pt-4 border-t border-border-dark space-y-2 fade-in">
+                                {result.alternativeTranslations.map((alt, index) => (
+                                    <div key={index} className="flex justify-between items-center group p-1 rounded">
+                                        <p onClick={() => handleAlternativeClick(alt)} className="text-lg text-text-dark/80 cursor-pointer hover:text-text-dark flex-grow">{alt}</p>
+                                        <button onClick={() => copyToClipboard(alt, `alt-${index}`)} title={t('copyTooltip')} className="opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center h-8 w-8 rounded-full bg-border-dark/50 hover:bg-border-dark text-text-dark/80">
+                                            <span className="material-symbols-outlined text-xl">{copiedStates[`alt-${index}`] ? 'check' : 'content_copy'}</span>
+                                        </button>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
                 )}
             </main>
+            <footer className="p-4 text-center text-xs text-text-dark/40">
+                <p>{t('footerCredit')}</p>
+            </footer>
         </>
     );
 };

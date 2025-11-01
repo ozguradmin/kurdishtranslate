@@ -1,8 +1,6 @@
-
-export type Language = 'auto' | 'ku' | 'tr' | 'en';
+export type Language = 'ku' | 'tr' | 'en';
 
 export const languageMap: Record<Language, string> = {
-  auto: 'Auto Detect',
   ku: 'Kurdish',
   tr: 'Turkish',
   en: 'English',
