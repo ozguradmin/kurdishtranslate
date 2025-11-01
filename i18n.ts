@@ -69,7 +69,10 @@ interface TranslationContextType {
 
 const TranslationContext = createContext<TranslationContextType | undefined>(undefined);
 
-export const TranslationProvider = ({ children }: { children: ReactNode }) => {
+// FIX: Explicitly typing `TranslationProvider` as a `React.FC` with required `children`
+// helps TypeScript correctly identify it as a component that can accept children,
+// resolving the type error in index.tsx.
+export const TranslationProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [language, setLanguage] = useState<UiLanguage>('tr');
 
   const t = useCallback((key: TranslationKey, params?: Record<string, string>): string => {
@@ -82,8 +85,6 @@ export const TranslationProvider = ({ children }: { children: ReactNode }) => {
     return translation;
   }, [language]);
 
-  // FIX: Replaced JSX with React.createElement to avoid syntax errors in a .ts file.
-  // This resolves the parsing errors and the cascading type error in index.tsx.
   return React.createElement(
     TranslationContext.Provider,
     { value: { language, setLanguage, t } },

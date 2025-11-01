@@ -107,7 +107,8 @@ const App = () => {
         const utterance = new SpeechSynthesisUtterance(text);
         const langMap: Record<string, string> = { 'en': 'en-US', 'tr': 'tr-TR' };
         
-        const currentLang = result?.detectedLanguage?.toLowerCase().startsWith('english') ? 'en' : targetLang;
+        const detectedLang = result?.detectedLanguage?.toLowerCase();
+        const currentLang = detectedLang?.startsWith('english') ? 'en' : targetLang;
 
         if (langMap[currentLang]) {
             utterance.lang = langMap[currentLang];
@@ -116,7 +117,8 @@ const App = () => {
     };
 
     const isSourceKurdish = useMemo(() => {
-        return sourceLang === 'ku' || (sourceLang === 'auto' && result?.detectedLanguage.toLowerCase().startsWith('kurdish'));
+        const detectedLang = result?.detectedLanguage?.toLowerCase();
+        return sourceLang === 'ku' || (sourceLang === 'auto' && !!detectedLang && detectedLang.startsWith('kurdish'));
     }, [sourceLang, result]);
     
     const isTargetKurdish = useMemo(() => targetLang === 'ku', [targetLang]);
