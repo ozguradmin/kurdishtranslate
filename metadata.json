@@ -1,0 +1,5 @@
+{
+  "name": "Kurdish AI Translator",
+  "description": "An advanced, AI-powered translation tool to translate between Kurdish, Turkish, and English with high accuracy, handling colloquialisms and providing alternatives. Built with Gemini and React.",
+  "requestFramePermissions": []
+}
